@@ -5,22 +5,14 @@ from torch.nn import functional as F
 import numpy as np
 import conformer
 from conformer import ConformerBlock
+from transformers import BertTokenizer, BertModel
+from torch.nn.utils.rnn import pack_sequence, pad_packed_sequence
 
-class TempSpeechClassifier(nn.Module):
-    def __init__(self):
-        super.conv1 = nn.Conv2d(1, 32, kernel_size=3)
-        self.fc1 = nn.Linear(32*126*126, 128)
-        self.fc2 = nn.Linear(128,1)
+BERTMODEL = BertModel.from_pretrained('bert-base-uncased', output_hidden_states=True)
+device = torch.device('cuda:{:d}'.format(3))
+BERTMODEL = BERTMODEL.to(device)
+BERTMODEL.eval()
 
-    def forward(self, x):
-        x = self.conv1(x)
-        x = torch.relu(x)
-        x = x.view(x.size(0), -1)
-        x = self.fc1(x)
-        x = torch.relu(x)
-        x = self.fc2(x)
-        x = torch.sigmoid(x)
-        return x
     
 class SpeechClassifierModel(nn.Module):
     def __init__(self, num_classes, feature_size, hidden_size, num_layers, dropout, bidirectional, device):
@@ -37,7 +29,6 @@ class SpeechClassifierModel(nn.Module):
                             bidirectional=bidirectional, batch_first=True)
         
         self.fc = nn.Linear(hidden_size*self.direction, num_classes)
-
     #def forward(self, x, y):
     def forward(self, logmels, bEmb):
         #import ipdb; ipdb.set_trace()
@@ -66,18 +57,11 @@ class ConformerModel(nn.Module):
         self.feature_size = feature_size
         self.hidden_size = hidden_size
         self.num_layers = num_layers
-        self.dropout = dropout
+        #self.dropout = dropout
         self.bidirectional = bidirectional
         self.direction = 2 if bidirectional else 1
         self.device = device
-        self.num_blocks = 16
-        
-        self.logmels_encoder = nn.TransformerEncoderLayer(d_model=feature_size, nhead=4, dim_feedforward=256, dropout=dropout, batch_first=True)
-        self.logmels_transformer = nn.TransformerEncoder(self.logmels_encoder, num_layers=num_layers)
-        
-        #self.bpe_encoder = nn.TransformerEncoderLayer(d_model=768, nhead=4, dim_feedforward=256, dropout=dropout)
-        #self.bpe_transformer = nn.TransformerEncoder(self.bpe_encoder, num_layers=num_layers)
-        
+        self.num_blocks = 5
         self.projTr = nn.Linear(768, 256)
         self.projSr = nn.Linear(40, 256)
 
@@ -92,66 +76,72 @@ class ConformerModel(nn.Module):
                                                               conv_dropout=0.1) 
                                                               for _ in range(self.num_blocks)])
 
+        self.fc1 = nn.Linear(hidden_size*self.direction, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, num_classes)
+        self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(dropout)
+        self.sigmoid = nn.Sigmoid()
         self.fc = nn.Linear(hidden_size*self.direction, num_classes)
 
     def forward(self, logmels, bEmb):
         #import ipdb; ipdb.set_trace()
-        #logmels_out = self.logmels_transformer(logmels)
-        #logmels_out = self.projSr(logmels_out)
-        import ipdb; ipdb.set_trace()
-        logmels_out = self.projSr(logmels)
-
-        #bpe_out = self.bpe_transformer(bEmb)
-        #bEmb_out = self.projTr(bpe_out)
-        bEmb_out = self.projTr(bEmb)
-
-        out_features = torch.cat((logmels_out, bEmb_out), dim=1)
+        unpacked_logmels, lengths = pad_packed_sequence(logmels, batch_first=True)
+        unpacked_text, textlengths = pad_packed_sequence(bEmb, batch_first=True)
+        # Access individual logmels in the batch
+        batch_size = unpacked_logmels.size(0)
+        max_length = unpacked_logmels.size(1)
+        out_features = []
+        for i in range(batch_size):
+            logmel = unpacked_logmels[i][:lengths[i]]
+            logmel = self.projSr(logmel)
+            textToken = unpacked_text[i][:textlengths[i]]
+            with torch.no_grad():
+                textEmb = BERTMODEL(textToken.unsqueeze(0)).hidden_states[0]
+                
+            textEmb = self.projTr(textEmb.squeeze(0))
+            in_features = torch.cat((logmel, textEmb), dim=0)
+            out_features.append(in_features)
+        
+        out_features = pack_sequence(out_features, enforce_sorted=False)
+        out_features, outLengths = pad_packed_sequence(out_features, batch_first=True)
         for block in self.conformer_blocks:
             out_features = block(out_features)
-        import ipdb; ipdb.set_trace()
-        out = self.fc(out_features)
-        out = nn.AdaptiveAvgPool1d(1)(out.permute(0, 2, 1))
-        out = torch.sigmoid(out)
+        out = nn.AdaptiveAvgPool1d(1)(out_features.permute(0, 2, 1))
+        out = self.fc1(out.permute(0, 2, 1))
+        out = self.relu(out)
+        out = self.dropout(out)
+        out = self.fc2(out)
+        out = self.sigmoid(out)
+        out = out.squeeze()
         return out
 
-    '''def forward(self, x):
-        import ipdb; ipdb.set_trace()
-        out = self.conformer(x)
-        out = self.fc(out)
-        out = nn.AdaptiveAvgPool1d(1)(out.permute(0,2,1))
-        out = torch.sigmoid(out)
-        return out'''
-
-   
-class SpeechClassifierModelTransformer(nn.Module):
-    def __init__(self, num_classes, feature_size, hidden_size, num_layers, dropout, bidirectional, device):
-        super(SpeechClassifierModelTransformer, self).__init__()
-        self.num_classes = num_classes
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.direction = 2 if bidirectional else 1
-        self.device = device
-        #self.transformer_encoder = nn.TransformerEncoderLayer(d_model=hidden_size*self.direction, nhead=4, dim_feedforward=256, dropout=0.2)
-        self.transformer_encoder = nn.TransformerEncoderLayer(d_model=feature_size, nhead=4, dim_feedforward=256, dropout=0.2)
-        self.transformer = nn.TransformerEncoder(self.transformer_encoder, num_layers=num_layers)
-        self.fc = nn.Linear(hidden_size*self.direction, num_classes)
-
-    def forward(self, x):
-        out = self.transformer(x)
-        out = self.fc(out)
-        #out = nn.AvgPool1d(1)(out)
-        out = nn.AdaptiveAvgPool1d(1)(out.permute(0,2,1))
-        out = torch.sigmoid(out)
+    def forward1(self, logmels, bEmb):
+        unpacked_logmels, lengths = pad_packed_sequence(logmels, batch_first=True)
+        unpacked_text, textlengths = pad_packed_sequence(bEmb, batch_first=True)
+        batch_size = unpacked_logmels.size(0)
+        max_length = unpacked_logmels.size(1)
+        out_features = []
+        for i in range(batch_size):
+            logmel = unpacked_logmels[i]
+            logmel = self.projSr(logmel)
+            textToken = unpacked_text[i]
+            textEmb = self.bert(textToken.unsqueeze(0)).last_hidden_state
+            textEmb = self.projTr(textEmb.squeeze(0))
+            in_features = torch.cat((logmel, textEmb), dim=0)
+            out_features.append(in_features)
+        
+        out_features = pack_sequence(out_features, enforce_sorted=False)
+        out_features, outLengths = pad_packed_sequence(out_features, batch_first=True)
+        for block in self.conformer_blocks:
+            out_features = block(out_features)
+        
+        out = nn.AdaptiveAvgPool1d(1)(out_features.permute(0, 2, 1))
+        out = self.fc1(out.permute(0, 2, 1))
+        out = self.relu(out)
+        out = self.dropout(out)
+        out = self.fc2(out)
+        out = out.squeeze()
         return out
-    
-        ''' _, (hn, _) = self.lstm(x)
-        hn = hn.transpose(0,1)
-        _, (hn2, _) = self.lstm2(hn)
-        hn2 = hn2.transpose(0,1)
-        _, (hn3, _) = self.lstm3(hn2)
-        out = self.fc(hn3)
-        out = torch.sigmoid(out[-1])
-        return out'''
 
     # Example usage:
     '''num_classes = 1

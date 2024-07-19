@@ -11,7 +11,7 @@ from transformers import BertTokenizer, BertModel
 #device = torch.device('cuda:{:d}'.format(3))
 TOK = BertTokenizer.from_pretrained('bert-base-uncased')
 #TOK = TOK.to(device)
-BERTMODEL = BertModel.from_pretrained('bert-base-uncased')
+#BERTMODEL = BertModel.from_pretrained('bert-base-uncased')
 #BERTMODEL= BERTMODEL.to(device)
     
 class RandomCut(nn.Module):
@@ -75,19 +75,44 @@ class SpeechCommandsDataset(torch.utils.data.Dataset):
         return self.data.shape[0]
     
     def fix_path(self, path):
-        return path.replace('/data/corpora/swb/swb1/data/', '/research/nfs_fosler_1/vishal/audio/swbd/')
-        #return path.replace('/home/karrolla.1/', '/home/karrolla.1/KWD1/')
+        #return path.replace('/data/corpora/swb/swb1/data/', '/research/nfs_fosler_1/vishal/audio/swbd/')
+        return path.replace('/home/karrolla.1/KWD/', '/home/karrolla.1/KWD1/KWD/')
+
+    def get_segment(self, wavform, sr, start, end):
+        #win = (end - start)/2
+        start_time = int(max(0,(start-0.05)*sr))
+        end_time = int(min((end+0.05)*sr, len(wavform[0])))  
+        return wavform[:, start_time:end_time]
 
     def __getitem__(self, index):
+        curr = self.data.iloc[index]
+        try:
+            wavform, sr = torchaudio.load(self.fix_path(curr['AudioPath']))
+            #wavform = self.get_segment(wavform, sr, curr['Start'], curr['End'])
+        except:
+            print(curr['AudioPath'])
+            print("some error in loading audio")
+            return None
+        wavform = self.get_segment(wavform, sr, curr['Start'], curr['End'])
+        wavform = wavform.type('torch.FloatTensor')
+        if sr > self.sr:
+            wavform = torchaudio.transforms.Resample(sr, self.sr)(wavform)
+        features = self.stft(wavform)
+        features = spectral_magnitude(features)
+        features = self.filterbank(features)
+        return features, curr['Class'], curr['AudioPath'], curr['Label']
+
+    def __getitem__old(self, index):
         curr = self.data.iloc[index]
         #import ipdb;ipdb.set_trace()
         try:
             wavform, sr = torchaudio.load(self.fix_path(curr['AudioPath']))
         except:
+            print(self.fix_path(curr['AudioPath']))
             print(curr['AudioPath'])
             print("some error in loading audio")
             return None
-        text = curr['Label']
+        #text = curr['Label']
     
     #wavform = self.input_norm(wavform)
         wavform = wavform.type('torch.FloatTensor')
@@ -100,12 +125,11 @@ class SpeechCommandsDataset(torch.utils.data.Dataset):
 
         
         #tokens_tensor = torch.tensor([TOK.encode(text, add_special_tokens=True)])
-        tokens_tensor = torch.tensor([TOK.encode(text, add_special_tokens=True)])
-        textBm = BERTMODEL(tokens_tensor)
-        textemB = textBm.last_hidden_state.detach()
+        #tokens_tensor = torch.tensor([TOK.encode(text, add_special_tokens=True)])
+        #textBm = BERTMODEL(tokens_tensor)
+        #textemB = textBm.last_hidden_state.detach()
         #textB = self.projTr(textemB)
-        #import ipdb;ipdb.set_trace();
-        return features, curr['Class'], curr['AudioPath'], textemB
+        return features, curr['Class'], curr['AudioPath'], curr['Label']
         
 
 def collate_fn(data):
@@ -113,28 +137,34 @@ def collate_fn(data):
     pholders = []
     labels = []
     texts = []
+    texts_ori = []
     for d in data:
-        fbank, label, pholder, textB = d
-        fbank = fbank.squeeze(0)# if fbank.size(1) > 2 else fbank
-        textB = textB.squeeze(0)# if textB.size(1) > 2 else textB
+        fbank, label, pholder, text = d
+        fbank = fbank.squeeze(0) #if fbank.size(1) > 2 else fbank
+        #text = text #if text.size(1) > 2 else text
         #import ipdb;ipdb.set_trace()    
         #speechtext = torch.cat((fbank, textB), 1)
         # NOT YET from here on the fbanks represent the input to the model which is the concatenation of the filterbanks and the text embeddings
         fbanks.append(fbank)
         labels.append(label)
         pholders.append(pholder)
-        texts.append(textB)
+        texts_ori.append(text)
     #import ipdb;ipdb.set_trace()    
     #fbanks = torch.nn.utils.rnn.pad_sequence(fbanks, batch_first=True)
     #try:
-    packfbanks = pack_sequence(fbanks, enforce_sorted=False)
-    fbanks, lenfbanks = pad_packed_sequence(packfbanks, batch_first=True)  # batch, seq_len, feature'''
+    fbanks = pack_sequence(fbanks, enforce_sorted=False)
+    #fbanks, lenfbanks = pad_packed_sequence(packfbanks, batch_first=True)  # batch, seq_len, feature'''
     labels = torch.tensor(labels)
     #import ipdb;ipdb.set_trace()
     #texts = torch.tensor(texts)
-    #texts = torch.nn.utils.rnn.pad_sequence(texts, batch_first=True)
-    packtexts = pack_sequence(texts, enforce_sorted=False)
-    texts, lentexts = pad_packed_sequence(packtexts, batch_first=True)  # batch, seq_len, feature'''
+    #text = [x[1] for x in lst if x[0].size(1) > 2] #list of transcripts in the batch
+    #textList = torch.tensor([TOK.encode(texts, add_special_tokens=True)])
+    textList = TOK(texts_ori).input_ids
+    #att_mask = TOK(texts).attention_mask
+    textList = [torch.tensor(x) for x in textList]
+    texts = pack_sequence(textList, enforce_sorted=False)
+    #texts = torch.nn.utils.rnn.pad_sequence(textList, batch_first=True)
+    #texts, lentexts = pad_packed_sequence(packtexts, batch_first=True)  # batch, seq_len, feature'''
     '''except:
         print(labels)
         print(pholders)
@@ -142,6 +172,6 @@ def collate_fn(data):
         #import ipdb;ipdb.set_trace()'''
     #texts = texts[0]
     
-    return fbanks, labels, pholders, texts
+    return fbanks, labels, pholders, texts, texts_ori
 
 

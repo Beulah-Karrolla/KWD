@@ -3,7 +3,7 @@ import os
 import argparse
 import torch.nn as nn
 from data import SpeechCommandsDataset, collate_fn
-from model import SpeechClassifierModel, SpeechClassifierModelTransformer, ConformerModel
+from model import SpeechClassifierModel, ConformerModel, SpeechClassifierBasicModel
 from torch.utils.data import DataLoader
 from sklearn.metrics import classification_report
 from tabulate import tabulate
@@ -32,16 +32,18 @@ def train(args, model, device, train_loader, optimizer, loss_fn, epoch):
     label_list = []
     model.train()  # Set the model to training mode
     for idx, (data, target, pholders, text) in enumerate(tqdm(train_loader, desc="Training")):
+        #import ipdb;ipdb.set_trace()
         data, target, text = data.to(device), target.to(device), text.to(device)
         output = model(data, text)
         target = target.float()
+        #import ipdb;ipdb.set_trace()
         loss = loss_fn(torch.flatten(output), target)
         loss.backward()
         #loss_rec += loss.detach()
         optimizer.step()
         optimizer.zero_grad()
         loss_list.append(loss.detach().item())
-        pred = torch.sigmoid(output)
+        #pred = torch.sigmoid(output)
         #pred_list.extend(torch.flatten(torch.round(pred)).cpu().numpy())
         label_list.extend(target.cpu().numpy())
     return epoch, loss_list
@@ -71,28 +73,36 @@ def main(args):
     #import ipdb;ipdb.set_trace()
     model = ConformerModel(**model_params)
     #import ipdb;ipdb.set_trace()    
-    #model = SpeechClassifierModelTransformer(**model_params)
+    #model = SpeechClassifierBasicModel(**model_params)
     if (args.load_pretrain_model):
+        import ipdb;ipdb.set_trace()
         checkpoint = torch.load(args.load_pretrain_model)
         model.load_state_dict(checkpoint['model_state_dict'])
     model=model.to(device)
     #import ipdb;ipdb.set_trace()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    #optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     loss_fn = nn.BCELoss()
     #loss_fn = nn.BCEWithLogitsLoss()
     #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.5)
     #scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr, epochs=args.epochs, steps_per_epoch=math.ceil(1. * len(train_loader) / 1), anneal_strategy='linear', pct_start=0.3)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=5, factor=0.5, verbose=True)
-    path = os.path.join('saved/tranformer/results/', (str(args.model_type)+'_'+str(args.model_name))+".txt")
+    path = os.path.join('saved/beulah/', (str(args.model_type)+'_'+str(args.model_name))+".txt")
     f = open(path,'a')
     for epoch in range(1, args.epochs + 1):
         print("\nstarting training with learning rate", optimizer.param_groups[0]['lr'])
         epoch, loss_list = train(args, model, device, train_loader, optimizer, loss_fn, epoch)
+        #import ipdb;ipdb.set_trace()
         log = f"| epoch = {epoch} | loss_vad = {np.mean(loss_list)} | lr = {optimizer.param_groups[0]['lr']} |"
         scheduler.step(np.mean(loss_list))
-        if epoch % 1 == 0:
+        
+        if epoch % 4 == 0:
             checkpoint_path = os.path.join(args.save_checkpoint_path, (str(args.model_type)+'_'+str(args.model_name)+'_'+str(epoch))+".pt")
+            '''if np.mean(loss_list) < 0.9 * best_loss:
+                save_checkpoint(model, optimizer, scheduler, model_params, checkpoint_path)
+                best_loss = np.mean(loss_list)'''
             save_checkpoint(model, optimizer, scheduler, model_params, checkpoint_path)
+            print("Model saved at", checkpoint_path)
         '''table = tabulate([['Best train accuracy', best_train_accuracy], 
                           ['Best train report', best_train_report],
                           ['Best epoch', best_epoch],
@@ -107,7 +117,7 @@ def main(args):
         print(log)
         f.write(log + "\n")
         print("Finished training")
-        print("Model saved at", checkpoint_path)
+        
     f.close()
 
         
