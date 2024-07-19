@@ -3,7 +3,7 @@ import os
 import argparse
 import torch.nn as nn
 from data import SpeechCommandsDataset, collate_fn
-from model import SpeechClassifierModel, ConformerModel, SpeechClassifierBasicModel
+from model import SpeechClassifierModel, ConformerModel
 from torch.utils.data import DataLoader
 from sklearn.metrics import classification_report
 from tabulate import tabulate
@@ -32,11 +32,9 @@ def train(args, model, device, train_loader, optimizer, loss_fn, epoch):
     label_list = []
     model.train()  # Set the model to training mode
     for idx, (data, target, pholders, text) in enumerate(tqdm(train_loader, desc="Training")):
-        #import ipdb;ipdb.set_trace()
         data, target, text = data.to(device), target.to(device), text.to(device)
         output = model(data, text)
         target = target.float()
-        #import ipdb;ipdb.set_trace()
         loss = loss_fn(torch.flatten(output), target)
         loss.backward()
         #loss_rec += loss.detach()
@@ -70,18 +68,13 @@ def main(args):
     model_params = {'num_classes': 1, 'feature_size': 40, 'hidden_size': args.hidden_size, 
                     'num_layers': 3, 'dropout': 0.2, 'bidirectional':True, 'device': device}  
     #model = SpeechClassifierModel(**model_params)
-    #import ipdb;ipdb.set_trace()
     model = ConformerModel(**model_params)
-    #import ipdb;ipdb.set_trace()    
     #model = SpeechClassifierBasicModel(**model_params)
     if (args.load_pretrain_model):
-        import ipdb;ipdb.set_trace()
         checkpoint = torch.load(args.load_pretrain_model)
         model.load_state_dict(checkpoint['model_state_dict'])
     model=model.to(device)
-    #import ipdb;ipdb.set_trace()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    #optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     loss_fn = nn.BCELoss()
     #loss_fn = nn.BCEWithLogitsLoss()
     #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.5)
@@ -92,7 +85,6 @@ def main(args):
     for epoch in range(1, args.epochs + 1):
         print("\nstarting training with learning rate", optimizer.param_groups[0]['lr'])
         epoch, loss_list = train(args, model, device, train_loader, optimizer, loss_fn, epoch)
-        #import ipdb;ipdb.set_trace()
         log = f"| epoch = {epoch} | loss_vad = {np.mean(loss_list)} | lr = {optimizer.param_groups[0]['lr']} |"
         scheduler.step(np.mean(loss_list))
         
