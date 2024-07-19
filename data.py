@@ -75,7 +75,6 @@ class SpeechCommandsDataset(torch.utils.data.Dataset):
         return self.data.shape[0]
     
     def fix_path(self, path):
-        #return path.replace('/data/corpora/swb/swb1/data/', '/research/nfs_fosler_1/vishal/audio/swbd/')
         return path.replace('/home/karrolla.1/KWD/', '/home/karrolla.1/KWD1/KWD/')
 
     def get_segment(self, wavform, sr, start, end):
@@ -104,7 +103,6 @@ class SpeechCommandsDataset(torch.utils.data.Dataset):
 
     def __getitem__old(self, index):
         curr = self.data.iloc[index]
-        #import ipdb;ipdb.set_trace()
         try:
             wavform, sr = torchaudio.load(self.fix_path(curr['AudioPath']))
         except:
@@ -114,7 +112,6 @@ class SpeechCommandsDataset(torch.utils.data.Dataset):
             return None
         #text = curr['Label']
     
-    #wavform = self.input_norm(wavform)
         wavform = wavform.type('torch.FloatTensor')
         if sr > self.sr:
             wavform = torchaudio.transforms.Resample(sr, self.sr)(wavform)
@@ -122,8 +119,6 @@ class SpeechCommandsDataset(torch.utils.data.Dataset):
         features = spectral_magnitude(features)
         features = self.filterbank(features)
         #features = self.projSr(features)
-
-        
         #tokens_tensor = torch.tensor([TOK.encode(text, add_special_tokens=True)])
         #tokens_tensor = torch.tensor([TOK.encode(text, add_special_tokens=True)])
         #textBm = BERTMODEL(tokens_tensor)
@@ -140,37 +135,25 @@ def collate_fn(data):
     texts_ori = []
     for d in data:
         fbank, label, pholder, text = d
-        fbank = fbank.squeeze(0) #if fbank.size(1) > 2 else fbank
-        #text = text #if text.size(1) > 2 else text
-        #import ipdb;ipdb.set_trace()    
-        #speechtext = torch.cat((fbank, textB), 1)
+        fbank = fbank.squeeze(0)
         # NOT YET from here on the fbanks represent the input to the model which is the concatenation of the filterbanks and the text embeddings
         fbanks.append(fbank)
         labels.append(label)
         pholders.append(pholder)
         texts_ori.append(text)
-    #import ipdb;ipdb.set_trace()    
-    #fbanks = torch.nn.utils.rnn.pad_sequence(fbanks, batch_first=True)
-    #try:
     fbanks = pack_sequence(fbanks, enforce_sorted=False)
     #fbanks, lenfbanks = pad_packed_sequence(packfbanks, batch_first=True)  # batch, seq_len, feature'''
     labels = torch.tensor(labels)
-    #import ipdb;ipdb.set_trace()
-    #texts = torch.tensor(texts)
-    #text = [x[1] for x in lst if x[0].size(1) > 2] #list of transcripts in the batch
-    #textList = torch.tensor([TOK.encode(texts, add_special_tokens=True)])
+    
     textList = TOK(texts_ori).input_ids
     #att_mask = TOK(texts).attention_mask
     textList = [torch.tensor(x) for x in textList]
     texts = pack_sequence(textList, enforce_sorted=False)
-    #texts = torch.nn.utils.rnn.pad_sequence(textList, batch_first=True)
-    #texts, lentexts = pad_packed_sequence(packtexts, batch_first=True)  # batch, seq_len, feature'''
     '''except:
         print(labels)
         print(pholders)
         print("some size error in texts")
         #import ipdb;ipdb.set_trace()'''
-    #texts = texts[0]
     
     return fbanks, labels, pholders, texts, texts_ori
 
