@@ -31,7 +31,7 @@ def train(args, model, device, train_loader, optimizer, loss_fn, epoch):
     pred_list = []
     label_list = []
     model.train()  # Set the model to training mode
-    for idx, (data, target, pholders, text) in enumerate(tqdm(train_loader, desc="Training")):
+    for idx, (data, target, pholders, text, text_ori) in enumerate(tqdm(train_loader, desc="Training")):
         data, target, text = data.to(device), target.to(device), text.to(device)
         output = model(data, text)
         target = target.float()
