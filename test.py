@@ -3,7 +3,7 @@ import torch.nn as nn
 import argparse
 from torch.utils.data import DataLoader
 import numpy as np
-from model import SpeechClassifierModel, SpeechClassifierModelTransformer, ConformerModel
+from model import SpeechClassifierModel, ConformerModel
 from data import SpeechCommandsDataset, collate_fn
 
 def main(args):
@@ -102,7 +102,6 @@ def main(args):
                 None
             print(count)
             count +=1'''
-    import ipdb;ipdb.set_trace()
     for length, metric in metrics.items():
         print("Metrics for label length {}: ".format(length))
         print("Total number of examples: {}".format(metric['total']))
@@ -112,20 +111,16 @@ def main(args):
         print("True positives: {}".format(metric['tp']))
         print("True negatives: {}".format(metric['tn']))
         print()
-    import ipdb;ipdb.set_trace()
     print("Total number of mistakes: {}".format(len(mistakes)))
-    print("Total number of test examples: {}".format(total))
-    print("Total number of correct predictions: {}".format(correct))
+    print("Total number of test examples: {}".format(count))
     print(mistakes)
     print("Total number of mistakes: {}".format(len(mistakes)))
-    print("Total number of test examples: {}".format(total))
-    print("Total number of correct predictions: {}".format(correct))
+    print("Total number of test examples: {}".format(count))
     f.write(str(mistakes))
     f.close()
             
-    import ipdb;ipdb.set_trace()
     # Calculate the accuracy of the model on the test data
-    accuracy = float(correct) / float(total)
+    accuracy = (float(count) - len(mistakes))/ float(count)
 
     # Print the accuracy
     print("Accuracy: {:.2f}%".format(accuracy * 100))

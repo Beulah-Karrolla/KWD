@@ -20,7 +20,7 @@ sys.path.append('/homes/2/karrolla.1/')
 #import whisperx
 #from VAD.whisperX import whisperx
 
-DEV = torch.device('cuda:{:d}'.format(2))
+DEV = torch.device('cuda:{:d}'.format(0))
 #nltk.download('punkt')
 dataset_root = "/home/karrolla.1/KWD/data/speech_commands"
 #torch.cuda.set_device(2)
@@ -501,8 +501,8 @@ def data_prep():
         #transcripts = whisper
 
 
-torch.cuda.set_device(2)
-device = torch.device('cuda:{:d}'.format(2))
+torch.cuda.set_device(0)
+device = torch.device('cuda:{:d}'.format(0))
 #make_small_csv('/home/karrolla.1/KWD1/KWD/data/csv_files/swbd_train_data_length.csv', '/home/karrolla.1/KWD1/KWD/data/csv_files/swbd_train_data_small.csv')
 #path_verification('/home/karrolla.1/KWD1/KWD/data/csv_files/swbd_train_data.csv')
 # Replace 'path/to/your/old_file.csv' with the actual path to your CSV file

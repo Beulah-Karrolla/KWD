@@ -9,7 +9,7 @@ from transformers import BertTokenizer, BertModel
 from torch.nn.utils.rnn import pack_sequence, pad_packed_sequence
 
 BERTMODEL = BertModel.from_pretrained('bert-base-uncased', output_hidden_states=True)
-device = torch.device('cuda:{:d}'.format(3))
+device = torch.device('cuda:{:d}'.format(0))
 BERTMODEL = BERTMODEL.to(device)
 BERTMODEL.eval()
 
