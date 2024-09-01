@@ -2,7 +2,7 @@ import torch
 import os
 import argparse
 import torch.nn as nn
-from data import SpeechCommandsDataset, collate_fn
+from data import SpeechCommandsDataset #, collate_fn
 from model import SpeechClassifierModel, ConformerModel
 from torch.utils.data import DataLoader
 from sklearn.metrics import classification_report
@@ -22,7 +22,7 @@ def save_checkpoint(model, optimizer, scheduler,model_params, filename):
 
 def data_loader(args, data, **kwargs):
     train_loader = DataLoader(data, batch_size=args.batch_size, shuffle = 1,
-                                    collate_fn=collate_fn, **kwargs)
+                                    collate_fn=data.collate_fn, **kwargs)
     return train_loader
 
 
@@ -57,19 +57,49 @@ def train(args, model, device, train_loader, optimizer, loss_fn, epoch):
     print(report)
     return 1, report, loss_list'''
 
+def validate(args, model, device, dev_loader, loss_fn, epoch):
+    loss_list = []
+    pred_list = []
+    label_list = []
+    total, correct = 0, 0
+    model.eval()  # Set the model to evaluation mode
+    for idx, (data, target, pholders, text, texts_ori) in enumerate(tqdm(dev_loader, desc="Validation")):
+        data, target, text = data.to(device), target.to(device), text.to(device)
+        output = model(data, text)
+        pred = torch.where(output.cpu()<0.9, 0, 1)
+        correct += torch.sum(pred == target.cpu())
+        total += len(output)
+        target = target.float()
+        loss = loss_fn(torch.flatten(output), target)
+        loss_list.append(loss.detach().item())
+        #pred = torch.sigmoid(output)
+        #pred_list.extend(torch.flatten(torch.round(pred)).cpu().numpy())
+        #label_list.extend(target.cpu().numpy())
+    return epoch, loss_list, float(correct)/float(total)
+    '''if total>0:
+        return epoch, loss_list, float(correct)/float(total)
+    else:
+        return epoch, loss_list, 0.0'''
+        
+
 def main(args):
     local_rank = args.device
     torch.cuda.set_device(local_rank)
     device = torch.device('cuda:{:d}'.format(local_rank))
-
-    train_dataset = SpeechCommandsDataset(args.data_path, args.model_type, device=device)
-    kwargs = {'num_workers': args.num_workers, 'pin_memory': True} if local_rank else {}
+    
+    #Train dataset and loader
+    train_dataset = SpeechCommandsDataset(args.data_path, args.model_type, device=device, sample_rate=args.sample_rate)
+    kwargs = {'num_workers': args.num_workers, 'pin_memory': True} #if local_rank else {}
     train_loader = data_loader(args, train_dataset, **kwargs)
+    
+    #Validation dataset and loader
+    valid_dataset = SpeechCommandsDataset(args.val_data_path, 'validation_test', device=device, sample_rate=args.sample_rate, train=False)
+    valid_loader = data_loader(args, valid_dataset, **kwargs)
+
+    #Model
     model_params = {'num_classes': 1, 'feature_size': 40, 'hidden_size': args.hidden_size, 
                     'num_layers': 3, 'dropout': 0.2, 'bidirectional':True, 'device': device}  
-    #model = SpeechClassifierModel(**model_params)
     model = ConformerModel(**model_params)
-    #model = SpeechClassifierBasicModel(**model_params)
     if (args.load_pretrain_model):
         checkpoint = torch.load(args.load_pretrain_model)
         model.load_state_dict(checkpoint['model_state_dict'])
@@ -80,21 +110,29 @@ def main(args):
     #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.5)
     #scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr, epochs=args.epochs, steps_per_epoch=math.ceil(1. * len(train_loader) / 1), anneal_strategy='linear', pct_start=0.3)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=5, factor=0.5, verbose=True)
-    path = os.path.join('saved/beulah/', (str(args.model_type)+'_'+str(args.model_name))+".txt")
+    path = os.path.join('saved/conformer/', (str(args.model_type)+'_'+str(args.model_name))+".txt")
     f = open(path,'a')
     for epoch in range(1, args.epochs + 1):
         print("\nstarting training with learning rate", optimizer.param_groups[0]['lr'])
         epoch, loss_list = train(args, model, device, train_loader, optimizer, loss_fn, epoch)
         log = f"| epoch = {epoch} | loss_vad = {np.mean(loss_list)} | lr = {optimizer.param_groups[0]['lr']} |"
         scheduler.step(np.mean(loss_list))
-        
+        print(log)
+        f.write(log + "\n")
+
         if epoch % 4 == 0:
+            epoch, loss_list, valid_accuracy = validate(args, model, device, valid_loader, loss_fn, epoch)
+            log = f"| epoch = {epoch} | loss_vad = {np.mean(loss_list)} | accuracy_vad = {valid_accuracy} |"
+            
+
             checkpoint_path = os.path.join(args.save_checkpoint_path, (str(args.model_type)+'_'+str(args.model_name)+'_'+str(epoch))+".pt")
             '''if np.mean(loss_list) < 0.9 * best_loss:
                 save_checkpoint(model, optimizer, scheduler, model_params, checkpoint_path)
                 best_loss = np.mean(loss_list)'''
             save_checkpoint(model, optimizer, scheduler, model_params, checkpoint_path)
             print("Model saved at", checkpoint_path)
+            print(log)
+            f.write(log + "\n")
         '''table = tabulate([['Best train accuracy', best_train_accuracy], 
                           ['Best train report', best_train_report],
                           ['Best epoch', best_epoch],
@@ -105,10 +143,10 @@ def main(args):
                           ['Current learning rate', optimizer.param_groups[0]['lr']]
                           ],
                           headers=['Metric', 'Value']) 
-        print(table + "\n")'''
+        print(table + "\n")
         print(log)
-        f.write(log + "\n")
-        print("Finished training")
+        f.write(log + "\n")'''
+    print("Finished training")
         
     f.close()
 
@@ -124,7 +162,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_classes', default=1, type=int, help='Number of classes')
     parser.add_argument('--save_checkpoint_path', type=str, default=None, help='Path to save the best checkpoint')
     parser.add_argument('--no_cuda', action='store_true', default=False, help='disables CUDA training')
-    parser.add_argument('--num_workers', type=int, default=1, help='number of data loading workers')
+    parser.add_argument('--num_workers', type=int, default=8, help='number of data loading workers')
     parser.add_argument('--hidden_size', type=int, default=128, help='lstm hidden size')
     parser.add_argument('--load_pretrain_model', type=str, default=None, required=False, help='path to load a pretrain model to continue training')
     parser.add_argument('--model_type', type=str, default=None, help='Type of data sent to the model')
